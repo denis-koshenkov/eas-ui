@@ -1,0 +1,5 @@
+[project]
+name = "ui"
+
+[tool.pyside6-project]
+files = ["main.py"]

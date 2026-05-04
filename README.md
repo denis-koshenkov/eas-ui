@@ -21,3 +21,9 @@ source env/bin/activate
 ```
 pip install pyside6
 ```
+
+# Running the UI
+Run from the root directory of this repo:
+```
+pyside6-project run ui
+```
