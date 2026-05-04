@@ -99,6 +99,9 @@ STATUS_NAMES = {
 }
 
 UINT32_MAX = 0xFFFFFFFF
+EASS_SERVICE_UUID = "7cec6bfa-6b62-4371-99eb-a335315223c5"
+EASS_TX_CHARACTERISTIC_UUID = "7cec6bfb-6b62-4371-99eb-a335315223c5"
+EASS_RX_CHARACTERISTIC_UUID = "7cec6bfc-6b62-4371-99eb-a335315223c5"
 
 
 @dataclass
@@ -166,18 +169,18 @@ class BluetoothController(QObject):
             self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         self._loop.close()
 
-    def scan(self, service_uuid: str) -> None:
-        self._schedule(self._scan(service_uuid.strip()))
+    def scan(self) -> None:
+        self._schedule(self._scan())
 
-    async def _scan(self, service_uuid: str) -> None:
+    async def _scan(self) -> None:
         try:
             from bleak import BleakScanner
 
-            kwargs = {"timeout": 5.0}
-            if service_uuid:
-                kwargs["service_uuids"] = [service_uuid]
             self.info.emit("Scanning for Bluetooth LE devices...")
-            devices = await BleakScanner.discover(**kwargs)
+            devices = await BleakScanner.discover(
+                timeout=5.0,
+                service_uuids=[EASS_SERVICE_UUID],
+            )
             device_rows = sorted(
                 [(device.name or "Unknown device", device.address) for device in devices],
                 key=lambda row: (row[0].lower(), row[1]),
@@ -187,10 +190,10 @@ class BluetoothController(QObject):
         except Exception as exc:
             self.error.emit(f"Bluetooth scan failed: {exc}")
 
-    def connect_to_device(self, address: str, service_uuid: str, tx_uuid: str, rx_uuid: str) -> None:
-        self._schedule(self._connect(address, service_uuid.strip(), tx_uuid.strip(), rx_uuid.strip()))
+    def connect_to_device(self, address: str) -> None:
+        self._schedule(self._connect(address))
 
-    async def _connect(self, address: str, service_uuid: str, tx_uuid: str, rx_uuid: str) -> None:
+    async def _connect(self, address: str) -> None:
         try:
             from bleak import BleakClient
 
@@ -198,22 +201,21 @@ class BluetoothController(QObject):
                 await self._client.disconnect()
 
             self.info.emit(f"Connecting to {address}...")
-            client = BleakClient(address)
+            client = BleakClient(address, services=[EASS_SERVICE_UUID])
             await client.connect()
 
-            if service_uuid:
-                services = client.services
-                service_ids = {str(service.uuid).lower() for service in services}
-                if service_uuid.lower() not in service_ids:
-                    await client.disconnect()
-                    self.connection_changed.emit(False, "Disconnected")
-                    self.error.emit("Connected device does not expose the configured EASS service UUID.")
-                    return
+            services = client.services
+            service_ids = {str(service.uuid).lower() for service in services}
+            if EASS_SERVICE_UUID not in service_ids:
+                await client.disconnect()
+                self.connection_changed.emit(False, "Disconnected")
+                self.error.emit("Connected device does not expose the configured EASS service UUID.")
+                return
 
             self._client = client
-            self._tx_uuid = tx_uuid
-            self._rx_uuid = rx_uuid
-            await client.start_notify(rx_uuid, self._handle_notification)
+            self._tx_uuid = EASS_TX_CHARACTERISTIC_UUID
+            self._rx_uuid = EASS_RX_CHARACTERISTIC_UUID
+            await client.start_notify(EASS_RX_CHARACTERISTIC_UUID, self._handle_notification)
             self.connection_changed.emit(True, f"Connected to {address}")
             self.info.emit("Notifications enabled on the EASS RX characteristic.")
         except Exception as exc:
@@ -505,13 +507,6 @@ class MainWindow(QMainWindow):
         box = QGroupBox("Bluetooth connection")
         layout = QGridLayout(box)
 
-        self.service_uuid_edit = QLineEdit()
-        self.service_uuid_edit.setPlaceholderText("EASS service UUID")
-        self.tx_uuid_edit = QLineEdit()
-        self.tx_uuid_edit.setPlaceholderText("TX characteristic UUID")
-        self.rx_uuid_edit = QLineEdit()
-        self.rx_uuid_edit.setPlaceholderText("RX characteristic UUID")
-
         self.device_combo = QComboBox()
         self.device_combo.setMinimumWidth(260)
         self.scan_button = QPushButton("Scan")
@@ -519,21 +514,13 @@ class MainWindow(QMainWindow):
         self.disconnect_button = QPushButton("Disconnect")
         self.connection_status = QLabel("Disconnected")
 
-        layout.addWidget(QLabel("Service"), 0, 0)
-        layout.addWidget(self.service_uuid_edit, 0, 1)
-        layout.addWidget(QLabel("TX"), 0, 2)
-        layout.addWidget(self.tx_uuid_edit, 0, 3)
-        layout.addWidget(QLabel("RX"), 0, 4)
-        layout.addWidget(self.rx_uuid_edit, 0, 5)
-        layout.addWidget(QLabel("Device"), 1, 0)
-        layout.addWidget(self.device_combo, 1, 1, 1, 2)
-        layout.addWidget(self.scan_button, 1, 3)
-        layout.addWidget(self.connect_button, 1, 4)
-        layout.addWidget(self.disconnect_button, 1, 5)
-        layout.addWidget(self.connection_status, 2, 0, 1, 6)
+        layout.addWidget(QLabel("Device"), 0, 0)
+        layout.addWidget(self.device_combo, 0, 1)
+        layout.addWidget(self.scan_button, 0, 2)
+        layout.addWidget(self.connect_button, 0, 3)
+        layout.addWidget(self.disconnect_button, 0, 4)
+        layout.addWidget(self.connection_status, 1, 0, 1, 5)
         layout.setColumnStretch(1, 2)
-        layout.setColumnStretch(3, 2)
-        layout.setColumnStretch(5, 2)
         return box
 
     def _build_alert_editor(self) -> QGroupBox:
@@ -621,7 +608,7 @@ class MainWindow(QMainWindow):
 
     def _scan(self) -> None:
         self.scan_button.setEnabled(False)
-        self.bluetooth.scan(self.service_uuid_edit.text())
+        self.bluetooth.scan()
 
     def _populate_devices(self, devices: list[tuple[str, str]]) -> None:
         self.device_combo.clear()
@@ -631,21 +618,11 @@ class MainWindow(QMainWindow):
 
     def _connect_bluetooth(self) -> None:
         address = self.device_combo.currentData()
-        tx_uuid = self.tx_uuid_edit.text().strip()
-        rx_uuid = self.rx_uuid_edit.text().strip()
         if not address:
             self._show_validation_error("Scan for and select an EAS device first.")
             return
-        if not tx_uuid or not rx_uuid:
-            self._show_validation_error("Enter both TX and RX characteristic UUIDs.")
-            return
         self.connect_button.setEnabled(False)
-        self.bluetooth.connect_to_device(
-            address,
-            self.service_uuid_edit.text(),
-            tx_uuid,
-            rx_uuid,
-        )
+        self.bluetooth.connect_to_device(address)
 
     def _set_connection_state(self, connected: bool, message: str) -> None:
         self.connection_status.setText(message)
@@ -660,9 +637,6 @@ class MainWindow(QMainWindow):
         self.disconnect_button.setEnabled(connected)
         self.scan_button.setEnabled(not connected)
         self.device_combo.setEnabled(not connected)
-        self.service_uuid_edit.setEnabled(not connected)
-        self.tx_uuid_edit.setEnabled(not connected)
-        self.rx_uuid_edit.setEnabled(not connected)
 
     def _sync_led_controls(self) -> None:
         enabled = self.notify_led_check.isChecked()

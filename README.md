@@ -23,7 +23,12 @@ pip install pyside6 bleak
 ```
 
 # Running the UI
-Run from the root directory of this repo:
+1. Activate the venv:
+```
+source env/bin/activate
+```
+
+2. Run from the root directory of this repo:
 ```
 pyside6-project run ui
 ```
