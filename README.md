@@ -17,9 +17,9 @@ python -m venv env
 source env/bin/activate
 ```
 
-1. Install pyside6:
+1. Install Python dependencies:
 ```
-pip install pyside6
+pip install pyside6 bleak
 ```
 
 # Running the UI

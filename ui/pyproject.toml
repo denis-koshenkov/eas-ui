@@ -1,5 +1,9 @@
 [project]
 name = "ui"
+dependencies = [
+    "bleak",
+    "pyside6",
+]
 
 [tool.pyside6-project]
 files = ["main.py"]
